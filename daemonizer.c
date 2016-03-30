@@ -11,11 +11,14 @@ int main(int argc,char *argv[])
 	config_t conf;
 	defaultConfig(&conf);
 	const struct option long_opts[] = {
-			{"path", required_argument, NULL, 'p'},
-			{"core", no_argument, NULL, 'c'},
-			{"fds", required_argument, NULL, 'f'},
-			{"stack", required_argument, NULL, 's'},
-			{"help", no_argument, NULL, 'h'},
+			{"run", required_argument, NULL, OPT_RUN},
+			{"workdir", required_argument, NULL, OPT_WORKDIR},
+			{"core", no_argument, NULL, OPT_COREDUMP},
+			{"fds", required_argument, NULL, OPT_FDS},
+			{"stack", required_argument, NULL, OPT_STACKSIZE},
+			{"help", no_argument, NULL, OPT_HELP},
+			{"stdout", required_argument, NULL, OPT_STDOUT},
+			{"stderr", required_argument, NULL, OPT_STDERR},
 			{0, 0, 0, 0}
 	};
 	int c = 0;
@@ -23,36 +26,47 @@ int main(int argc,char *argv[])
 	{
 		switch(c)
 		{
-			case 'c':
+			case OPT_COREDUMP:
 				conf.coredump = true;
 				break;
-			case 'p':
-				conf.path = optarg;
-				conf.pflag = true;
+			case OPT_RUN:
+				conf.run = optarg;
+				conf.runFlag = true;
 				break;
-			case 'f':
+			case OPT_WORKDIR:
+				conf.workDir = optarg;
+				conf.wdFlag = true;
+				break;
+			case OPT_FDS:
 				conf.openFiles = atoi(optarg);
-				conf.fdflag = true;
+				conf.fdFlag = true;
 				break;
-			case 's':
+			case OPT_STACKSIZE:
 				conf.stackSize = atoi(optarg)*1024;
-				conf.sflag = true;
+				conf.stackFlag = true;
 				break;
-			case 'h':
+			case OPT_HELP:
 				showUsage();
 				exit(EXIT_SUCCESS);
+			case OPT_STDOUT:
+				conf.stdoutPath = optarg;
+				conf.stdoutFlag = true;
+				break;
+			case OPT_STDERR:
+				conf.stderrPath = optarg;
+				conf.stderrFlag = true;
 		}
 	}
-	if (!conf.pflag) //没有设置path参数
+	if (!conf.runFlag) //没有设置run参数
 	{
-		fprintf(stderr,"[%s:%d] path is not set!\n",__FILE__,__LINE__);
+		fprintf(stderr,"[%s:%d] run file is not set!\n",__FILE__,__LINE__);
 		exit(EXIT_FAILURE);
 	}
 	pid_t child,sid;
 	child = vfork();
 	if (child < 0) //执行fork失败
 	{
-		fprintf(stderr,"[%s:%d] vfork error!",__FILE__,__LINE__);
+		fprintf(stderr,"[%s:%d] vfork error!\n",__FILE__,__LINE__);
 		exit(EXIT_FAILURE);
 	}
 	if (child > 0) //执行fork成功 && 主进程
@@ -64,19 +78,37 @@ int main(int argc,char *argv[])
 	sid = setsid();
 	if (sid < 0)
 	{
+		fprintf(stderr,"[%s:%d] setsid error!\n",__FILE__,__LINE__);
 		exit(EXIT_FAILURE);
 	}
-	close(STDIN_FILENO);
-	close(STDOUT_FILENO);
-	close(STDERR_FILENO);
 
 	if (conf.coredump) enableCoredump();
-	if (conf.sflag) setStackSize(conf.stackSize);
-	if (conf.fdflag) setOpenFiles(conf.openFiles);
+	if (conf.stackFlag) setStackSize(conf.stackSize);
+	if (conf.fdFlag) setOpenFiles(conf.openFiles);
+	if (conf.wdFlag) setWorkPath(conf.workDir);
+
+	close(STDIN_FILENO);
+
+	if (conf.stdoutFlag)
+	{
+		redirectStdout(conf.stdoutPath);
+	}
+	else
+	{
+		close(STDOUT_FILENO);
+	}
+	if (conf.stderrFlag)
+	{
+		redirectStderr(conf.stderrPath);
+	}
+	else
+	{
+		close(STDERR_FILENO);
+	}
 
 	char * const *child_argv = { NULL };
 	char * const *child_envp = { NULL };
-	execve(conf.path,child_argv,child_envp);
+	execve(conf.run,child_argv,child_envp);
 
 	perror("execve");
 	exit(EXIT_FAILURE);
@@ -87,12 +119,18 @@ int main(int argc,char *argv[])
 void defaultConfig(config_t *config)
 {
 	config->coredump = false;
-	config->path = NULL;
-	config->pflag = false;
+	config->run = NULL;
+	config->runFlag = false;
 	config->openFiles = 1024;
-	config->fdflag = false;
+	config->fdFlag = false;
 	config->stackSize = 8192*1024;
-	config->sflag = false;
+	config->stackFlag = false;
+	config->workDir = NULL;
+	config->wdFlag = false;
+	config->stdoutPath = "/dev/null";
+	config->stdoutFlag = false;
+	config->stderrPath = "/dev/null";
+	config->stderrFlag = false;
 }
 
 void enableCoredump()
@@ -122,15 +160,63 @@ void setOpenFiles(unsigned long openFiles)
 	return;
 }
 
+void setWorkPath(const char *workdir)
+{
+	if (chdir(workdir) < 0)
+	{
+		fprintf(stderr,"[%s:%d] change to workdir failed!\n",__FILE__,__LINE__);
+		exit(EXIT_FAILURE);
+	}
+}
+
+void redirectStdout(const char *stdoutPath)
+{
+	FILE *fd;
+	fd  = fopen(stdoutPath,"w+");
+	if (NULL == fd)
+	{
+		fprintf(stderr,"[%s:%d] open stdout file failed!\n",__FILE__,__LINE__);
+		exit(EXIT_FAILURE);
+	}
+	int ret = dup2(fileno(fd), STDOUT_FILENO);
+	if (-1 == ret)
+	{
+		fprintf(stderr,"[%s:%d] redirect stdout failed!\n",__FILE__,__LINE__);
+		exit(EXIT_FAILURE);
+	}
+	fclose(fd);
+}
+
+void redirectStderr(const char *stderrPath)
+{
+	FILE *fd;
+	fd  = fopen(stderrPath,"w+");
+	if (NULL == fd)
+	{
+		fprintf(stderr,"[%s:%d] open stderr file failed!\n",__FILE__,__LINE__);
+		exit(EXIT_FAILURE);
+	}
+	int ret = dup2(fileno(fd), STDERR_FILENO);
+	if (-1 == ret)
+	{
+		fprintf(stderr,"[%s:%d] redirect stderr failed!\n",__FILE__,__LINE__);
+		exit(EXIT_FAILURE);
+	}
+	fclose(fd);
+}
+
 void showUsage()
 {
 	printf("daemonizer %s (%s) by <hanbing0715@gmail.com>\n\n",VERSION,DATE);
 	printf("A tool can run any program in daemon,\n");
 	printf("and can set some resource limit in command line.\n\n");
-	printf("Usage:daemonizer --path <prog_file> [--core] [--fds <max_open_fd>] [--stack <stack_size>]\n\n");
-	printf("--path <prog_file>\tThe program want to run in daemon.\n");
+	printf("Usage:daemonizer --run <prog_file> [options...]\n\n");
+	printf("--run <prog_file>\tThe program want to run in daemon.\n");
 	printf("--core\t\t\tEnable coredump for daemon program.\n");
 	printf("--fds <max_open_fd>\tSet max number of file descriptors for daemon program.\n");
 	printf("--stack <stack_size>\tSet stack size of daemon program(in KiByte).\n");
+	printf("--workdir <work_dir>\tSet daemon program work directory.\n");
+	printf("--stdout <stdout_file>\tRedirect stdout to file.\n");
+	printf("--stderr <stderr_file>\tRedirect stderr to file.\n");
 	return;
 }
