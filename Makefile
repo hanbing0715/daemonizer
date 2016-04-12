@@ -16,3 +16,6 @@ clean:
 	
 release:daemonizer.c daemonizer.h
 	$(C_COMPILER) $< -o $(PROJECT)
+    
+install:daemonizer
+	install -s $(PROJECT) /usr/bin/
