@@ -16,3 +16,9 @@ daemonizer --run <prog_file> [options...]
 --stdout <stdout_file> Redirect stdout to file.
 --stderr <stderr_file> Redirect stderr to file.
 ```
+
+TODO
+---
+
+* Set ```LD_LIBRARY_PATH``` in command line.
+* Set ```uid``` and ```gid``` in command line.
